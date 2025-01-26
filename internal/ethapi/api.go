@@ -650,10 +650,10 @@ func (s *PublicBlockChainAPI) GetHeaderByHash(ctx context.Context, hash common.H
 }
 
 // GetBlockByNumber returns the requested canonical block.
-// * When blockNr is -1 the chain head is returned.
-// * When blockNr is -2 the pending chain head is returned.
-// * When fullTx is true all transactions in the block are returned, otherwise
-//   only the transaction hash is returned.
+//   - When blockNr is -1 the chain head is returned.
+//   - When blockNr is -2 the pending chain head is returned.
+//   - When fullTx is true all transactions in the block are returned, otherwise
+//     only the transaction hash is returned.
 func (s *PublicBlockChainAPI) GetBlockByNumber(ctx context.Context, number rpc.BlockNumber, fullTx bool) (map[string]interface{}, error) {
 	block, err := s.b.BlockByNumber(ctx, number)
 	if block != nil && err == nil {
@@ -667,6 +667,19 @@ func (s *PublicBlockChainAPI) GetBlockByNumber(ctx context.Context, number rpc.B
 		return response, err
 	}
 	return nil, err
+}
+
+// 新增：GetBlocksBySender 返回指定 sender 的区块号列表
+func (s *PublicBlockChainAPI) GetBlocksBySender(ctx context.Context, sender string) ([]uint64, error) {
+	// 将字符串转换为地址类型
+	address := common.HexToAddress(sender)
+	// 调用 BlockChain 方法获取 sender 对应的区块列表
+	blocks, err := s.b.BlocksBySender(ctx, address)
+	// 如果结果为空，返回错误提示
+	if blocks == nil || err != nil {
+		return nil, fmt.Errorf("no blocks found for sender: %s", sender)
+	}
+	return blocks, nil
 }
 
 // GetBlockByHash returns the requested block. When fullTx is true all transactions in the block are returned in full

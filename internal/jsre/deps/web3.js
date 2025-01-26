@@ -5267,6 +5267,14 @@ Object.defineProperty(Eth.prototype, 'defaultAccount', {
 });
 
 var methods = function () {
+    // 新增：GetBlocksBySender，将调用 api.go 中的 GetBlocksBySender 方法
+    var getBlocksBySender = new Method({
+        name: 'getBlocksBySender',
+        call: 'eth_getBlocksBySender',
+        params: 1,
+        inputFormatter: [formatters.inputAddressFormatter]
+    });
+
     var getBalance = new Method({
         name: 'getBalance',
         call: 'eth_getBalance',
@@ -5432,6 +5440,7 @@ var methods = function () {
     });
 
     return [
+        getBlocksBySender,
         getBalance,
         getStorageAt,
         getCode,

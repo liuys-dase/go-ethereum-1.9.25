@@ -212,6 +212,10 @@ type BlockChain struct {
 	shouldPreserve     func(*types.Block) bool        // Function used to determine whether should preserve the given block.
 	terminateInsert    func(common.Hash, uint64) bool // Testing hook used to terminate ancient receipt chain insertion.
 	writeLegacyJournal bool                           // Testing flag used to flush the snapshot journal in legacy format.
+
+	// 新增：senderToBlockMap 用来存储每个地址对应的区块号（测试用）
+	senderToBlockMap map[common.Address]map[uint64]struct{} // 添加 sender 到区块编号的映射
+	senderLock       sync.RWMutex                           // 用于保护 senderToBlockMap 的读写锁
 }
 
 // NewBlockChain returns a fully initialised block chain using information
@@ -250,6 +254,9 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		engine:         engine,
 		vmConfig:       vmConfig,
 		badBlocks:      badBlocks,
+		// 新增
+		senderToBlockMap: make(map[common.Address]map[uint64]struct{}), // 初始化映射表
+		senderLock:       sync.RWMutex{},                               // 初始化锁
 	}
 	bc.validator = NewBlockValidator(chainConfig, bc, engine)
 	bc.prefetcher = newStatePrefetcher(chainConfig, bc, engine)
@@ -400,6 +407,22 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		}()
 	}
 	return bc, nil
+}
+
+// 新增：GetBlocksBySender 获取指定 sender 的区块编号列表
+func (bc *BlockChain) GetBlocksBySender(sender common.Address) []uint64 {
+	bc.senderLock.RLock()
+	defer bc.senderLock.RUnlock()
+	m := bc.senderToBlockMap[sender]
+	if m == nil {
+		return nil
+	} else {
+		blocks := make([]uint64, 0, len(m))
+		for block := range m {
+			blocks = append(blocks, block)
+		}
+		return blocks
+	}
 }
 
 // GetVMConfig returns the block chain VM config.
@@ -1622,6 +1645,27 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		bc.writeHeadBlock(block)
 	}
 	bc.futureBlocks.Remove(block.Hash())
+
+	// 新增：遍历区块中的交易，更新 senderToBlockMap
+	for _, tx := range block.Transactions() {
+		sender, err := types.Sender(types.NewEIP155Signer(bc.chainConfig.ChainID), tx)
+		if err != nil {
+			log.Error("Failed to retrieve sender", "txHash", tx.Hash(), "err", err)
+			continue
+		}
+
+		blockNumber := block.NumberU64()
+
+		bc.senderLock.Lock()
+		// 如果 senderToBlockMap 中没有 sender，则初始化
+		if _, exists := bc.senderToBlockMap[sender]; !exists {
+			bc.senderToBlockMap[sender] = make(map[uint64]struct{})
+		}
+		bc.senderToBlockMap[sender][blockNumber] = struct{}{}
+		bc.senderLock.Unlock()
+
+		log.Info("Mapped sender to block", "sender", sender.Hex(), "blockNumber", blockNumber)
+	}
 
 	if status == CanonStatTy {
 		bc.chainFeed.Send(ChainEvent{Block: block, Hash: block.Hash(), Logs: logs})

@@ -19,6 +19,7 @@ package les
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -95,6 +96,11 @@ func (b *LesApiBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumbe
 		return nil, err
 	}
 	return b.BlockByHash(ctx, header.Hash())
+}
+
+// 新增：轻节点的 BlocksBySender（不实现）
+func (b *LesApiBackend) BlocksBySender(ctx context.Context, sender common.Address) ([]uint64, error) {
+	return nil, fmt.Errorf("not implemented")
 }
 
 func (b *LesApiBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {

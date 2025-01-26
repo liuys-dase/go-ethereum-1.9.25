@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# 删除目录
+rm -rf ./testchain
+
 # 生成私钥
 python3 1_sk_gen.py 10
 

@@ -7,9 +7,6 @@ DATA_DIR="./testchain"                   # 测试链数据目录
 GETH_BINARY="../build/bin/geth"          # 替换为 Geth 的可执行文件路径
 ALLOC_BALANCE="0xFFFFFFFFFFFFFFFFFFFFFFFFF" # 分配的大量余额 (单位: wei)
 
-# 删除并创建数据目录
-rm -rf $DATA_DIR && mkdir -p $DATA_DIR
-
 # 创建创世块文件
 echo "Creating genesis file..."
 cat > $GENESIS_FILE <<EOL
