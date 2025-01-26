@@ -1,0 +1,5 @@
+loadScript("gen_blocks.js")
+eth.getBlocksBySender(eth.accounts[0])
+eth.getBlocksBySender(eth.accounts[1])
+eth.getBlocksBySender(eth.accounts[2])
+eth.getBlocksBySender(eth.accounts[3])
