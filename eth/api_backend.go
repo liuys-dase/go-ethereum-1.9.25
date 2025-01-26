@@ -107,7 +107,7 @@ func (b *EthAPIBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumbe
 	return b.eth.blockchain.GetBlockByNumber(uint64(number)), nil
 }
 
-// 新增
+// 新增：由全节点调用
 func (b *EthAPIBackend) BlocksBySender(ctx context.Context, sender common.Address) ([]uint64, error) {
 	return b.eth.blockchain.GetBlocksBySender(sender), nil
 }

@@ -3,8 +3,8 @@
 
 var password = "password";          // 替换为账户密码
 var amountEther = 0.01;             // 转账金额（单位：Ether）
-var addressNum = 5;                 // 使用的地址数
-var blockNum = 10;                  // 区块数
+var addressNum = 10;                 // 使用的地址数
+var blockNum = 8;                  // 区块数
 var txNumPerBlock = 5;              // 每个区块的交易数
 
 // 创建 addressNum 个发送地址（并且解锁） 和 目标地址

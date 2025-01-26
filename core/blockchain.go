@@ -45,6 +45,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	lru "github.com/hashicorp/golang-lru"
+	"github.com/liuys-dase/blocksketch/sketch"
 )
 
 var (
@@ -215,8 +216,18 @@ type BlockChain struct {
 
 	// 新增：senderToBlockMap 用来存储每个地址对应的区块号（测试用）
 	senderToBlockMap map[common.Address]map[uint64]struct{} // 添加 sender 到区块编号的映射
-	senderLock       sync.RWMutex                           // 用于保护 senderToBlockMap 的读写锁
+	blockSketch      *sketch.BlockSketch
+	indexType        IndexType // 索引类型
 }
+
+// 新增：IndexType 枚举类型
+type IndexType int
+
+const (
+	// 定义枚举值
+	MAP_TYPE IndexType = iota
+	BLOCKSKETCH_TYPE
+)
 
 // NewBlockChain returns a fully initialised block chain using information
 // available in the database. It initialises the default Ethereum Validator and
@@ -232,6 +243,15 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	txLookupCache, _ := lru.New(txLookupCacheLimit)
 	futureBlocks, _ := lru.New(maxFutureBlocks)
 	badBlocks, _ := lru.New(badBlockLimit)
+
+	// 新增
+	indexType := BLOCKSKETCH_TYPE // 根据实际情况选择索引类型
+
+	// blockSketch 初始化
+	maxLevel := 4 // 可容纳的最大区块数量为 2 ^ (maxLevel - 1)
+	useFlatten := false
+	blockSketchConfig := sketch.NewBlockSketchConfig("dataSource", maxLevel, 0.01, 7, 12, 4, 30, 16, 3, 3, true, 4, useFlatten)
+	blockSketch := sketch.NewBlockSketch(blockSketchConfig)
 
 	bc := &BlockChain{
 		chainConfig: chainConfig,
@@ -256,7 +276,8 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		badBlocks:      badBlocks,
 		// 新增
 		senderToBlockMap: make(map[common.Address]map[uint64]struct{}), // 初始化映射表
-		senderLock:       sync.RWMutex{},                               // 初始化锁
+		blockSketch:      blockSketch,
+		indexType:        indexType,
 	}
 	bc.validator = NewBlockValidator(chainConfig, bc, engine)
 	bc.prefetcher = newStatePrefetcher(chainConfig, bc, engine)
@@ -410,18 +431,29 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 }
 
 // 新增：GetBlocksBySender 获取指定 sender 的区块编号列表
+// 根据 indexType 的不同，将使用不同的方式进行索引
 func (bc *BlockChain) GetBlocksBySender(sender common.Address) []uint64 {
-	bc.senderLock.RLock()
-	defer bc.senderLock.RUnlock()
-	m := bc.senderToBlockMap[sender]
-	if m == nil {
-		return nil
-	} else {
-		blocks := make([]uint64, 0, len(m))
-		for block := range m {
-			blocks = append(blocks, block)
+	switch bc.indexType {
+	case MAP_TYPE:
+		m := bc.senderToBlockMap[sender]
+		if m == nil {
+			return nil
+		} else {
+			ret := make([]uint64, 0, len(m))
+			for block := range m {
+				ret = append(ret, block)
+			}
+			return ret
 		}
-		return blocks
+	case BLOCKSKETCH_TYPE:
+		nodes := bc.blockSketch.Get(sender.Hex())
+		ret := make([]uint64, 0, len(nodes))
+		for _, node := range nodes {
+			ret = append(ret, uint64(node.GetRange().Start))
+		}
+		return ret
+	default:
+		return nil
 	}
 }
 
@@ -1646,25 +1678,47 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	}
 	bc.futureBlocks.Remove(block.Hash())
 
-	// 新增：遍历区块中的交易，更新 senderToBlockMap
-	for _, tx := range block.Transactions() {
-		sender, err := types.Sender(types.NewEIP155Signer(bc.chainConfig.ChainID), tx)
-		if err != nil {
-			log.Error("Failed to retrieve sender", "txHash", tx.Hash(), "err", err)
-			continue
-		}
-
+	// 新增：根据 indexType 维护索引
+	switch bc.indexType {
+	case BLOCKSKETCH_TYPE:
+		// 维护 blockSketch
 		blockNumber := block.NumberU64()
-
-		bc.senderLock.Lock()
-		// 如果 senderToBlockMap 中没有 sender，则初始化
-		if _, exists := bc.senderToBlockMap[sender]; !exists {
-			bc.senderToBlockMap[sender] = make(map[uint64]struct{})
+		txns := make([]string, 0, len(block.Transactions()))
+		for _, tx := range block.Transactions() {
+			tx_hash := "txHash"
+			block_numer := "blockNumber"
+			sender, _ := types.Sender(types.NewEIP155Signer(bc.chainConfig.ChainID), tx)
+			sender_str := sender.Hex()
+			receiver_str := tx.To().Hex()
+			txns = append(txns, tx_hash+","+block_numer+","+sender_str+","+receiver_str)
 		}
-		bc.senderToBlockMap[sender][blockNumber] = struct{}{}
-		bc.senderLock.Unlock()
+		success := bc.blockSketch.AddBlock(int(blockNumber), txns)
+		if success {
+			log.Info("Added block to blockSketch", "blockNumber", blockNumber)
+		} else {
+			log.Warn("Failed to add block to blockSketch", "blockNumber", blockNumber)
+		}
+	case MAP_TYPE:
+		// 遍历区块中的交易，更新 senderToBlockMap
+		for _, tx := range block.Transactions() {
+			sender, err := types.Sender(types.NewEIP155Signer(bc.chainConfig.ChainID), tx)
+			if err != nil {
+				log.Warn("Failed to retrieve sender", "txHash", tx.Hash(), "err", err)
+				continue
+			}
 
-		log.Info("Mapped sender to block", "sender", sender.Hex(), "blockNumber", blockNumber)
+			blockNumber := block.NumberU64()
+
+			// 如果 senderToBlockMap 中没有 sender，则初始化
+			if _, exists := bc.senderToBlockMap[sender]; !exists {
+				bc.senderToBlockMap[sender] = make(map[uint64]struct{})
+			}
+			bc.senderToBlockMap[sender][blockNumber] = struct{}{}
+
+			log.Info("Mapped sender to block", "sender", sender.Hex(), "blockNumber", blockNumber)
+		}
+	default:
+		log.Warn("Unknown index type", "indexType", bc.indexType)
 	}
 
 	if status == CanonStatTy {
